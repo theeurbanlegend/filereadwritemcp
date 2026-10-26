@@ -62,7 +62,7 @@ impl FileToolsCore {
         let explicit_range = from_line.is_some() || to_line.is_some();
         let cap = READ_PREVIEW_MAX_LINES;
 
-        let mut lines = Self::read_file_range(
+        let (mut lines, trailing_newline) = Self::read_file_range(
             &safe,
             from_line.unwrap_or(1),
             if explicit_range {
@@ -78,8 +78,13 @@ impl FileToolsCore {
             truncated = true;
         }
 
+        let mut content = lines.join("\n");
+        if trailing_newline {
+            content.push('\n');
+        }
+
         Ok(ReadFileResult {
-            content: lines.join("\n"),
+            content,
             hash: Self::get_file_hash(&safe)?,
             bytes: bytes as usize,
             line_count: lines.len(),
@@ -546,22 +551,32 @@ impl FileToolsCore {
         file_path: &str,
         from_line: usize,
         to_line: usize,
-    ) -> std::io::Result<Vec<String>> {
-        let file = File::open(file_path)?;
-        let reader = BufReader::new(file);
+    ) -> std::io::Result<(Vec<String>, bool)> {
+        let mut reader = BufReader::new(File::open(file_path)?);
         let mut lines = Vec::new();
+        let mut buf = Vec::new();
+        let mut n = 0; // 1-based
+        let mut ended_with_newline = false;
 
-        for (i, line) in reader.lines().enumerate() {
-            let n = i + 1; // 1-based
-            if n >= from_line && n <= to_line {
-                lines.push(line?);
+        while n < to_line {
+            buf.clear();
+            if reader.read_until(b'\n', &mut buf)? == 0 {
+                let trailing_newline = ended_with_newline && !lines.is_empty();
+                return Ok((lines, trailing_newline));
             }
-            if n >= to_line {
-                break;
+            n += 1;
+            ended_with_newline = buf.last() == Some(&b'\n');
+            if ended_with_newline {
+                buf.pop();
+            }
+            if n >= from_line {
+                let line = String::from_utf8(std::mem::take(&mut buf))
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                lines.push(line);
             }
         }
 
-        Ok(lines)
+        Ok((lines, false))
     }
 
     fn build_regex(&self, pattern: &str, case_insensitive: bool) -> Regex {
@@ -640,6 +655,97 @@ mod tests {
             core.assert_allowed_path(&path(base.join("root/link/new.txt")))
                 .is_err()
         );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    fn round_trip(core: &FileToolsCore, file: &str, from: Option<usize>, to: Option<usize>) {
+        let before = fs::read(file).unwrap();
+        let read = core.read_file(file, from, to).unwrap();
+        core.write_file(file, &read.content, from, to, Some(&read.hash))
+            .unwrap();
+        assert_eq!(fs::read(file).unwrap(), before);
+    }
+
+    #[test]
+    fn read_keeps_trailing_newline() {
+        let (base, core) = sandbox("trailing");
+        let file = path(base.join("root/a.txt"));
+        fs::write(&file, "a\nb\n").unwrap();
+        let read = core.read_file(&file, None, None).unwrap();
+        assert_eq!(read.content, "a\nb\n");
+        assert_eq!(read.line_count, 2);
+        round_trip(&core, &file, None, None);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn read_keeps_crlf_line_endings() {
+        let (base, core) = sandbox("crlf");
+        let file = path(base.join("root/a.txt"));
+        fs::write(&file, "a\r\nb\r\n").unwrap();
+        let read = core.read_file(&file, None, None).unwrap();
+        assert_eq!(read.content, "a\r\nb\r\n");
+        assert_eq!(read.line_count, 2);
+        round_trip(&core, &file, None, None);
+        round_trip(&core, &file, Some(1), Some(1));
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn read_without_trailing_newline_is_unchanged() {
+        let (base, core) = sandbox("no-trailing");
+        let file = path(base.join("root/a.txt"));
+        fs::write(&file, "a\nb").unwrap();
+        assert_eq!(core.read_file(&file, None, None).unwrap().content, "a\nb");
+        round_trip(&core, &file, None, None);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn range_reads_round_trip() {
+        let (base, core) = sandbox("range");
+        let file = path(base.join("root/a.txt"));
+        fs::write(&file, "a\nb\nc\n").unwrap();
+        assert_eq!(
+            core.read_file(&file, Some(2), Some(2)).unwrap().content,
+            "b"
+        );
+        assert_eq!(
+            core.read_file(&file, Some(2), None).unwrap().content,
+            "b\nc\n"
+        );
+        assert_eq!(core.read_file(&file, Some(5), Some(9)).unwrap().content, "");
+        round_trip(&core, &file, Some(2), Some(2));
+        round_trip(&core, &file, Some(2), Some(3));
+        round_trip(&core, &file, Some(2), None);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn long_reads_are_truncated_without_trailing_newline() {
+        let (base, core) = sandbox("truncate");
+        let file = path(base.join("root/a.txt"));
+        let cap = crate::common::constants::READ_PREVIEW_MAX_LINES;
+        fs::write(&file, "x\n".repeat(cap + 1)).unwrap();
+        let read = core.read_file(&file, None, None).unwrap();
+        assert!(read.truncated);
+        assert_eq!(read.line_count, cap);
+        assert!(!read.content.ends_with('\n'));
+        fs::write(&file, "x\n".repeat(cap)).unwrap();
+        let read = core.read_file(&file, None, None).unwrap();
+        assert!(!read.truncated);
+        assert_eq!(read.content, "x\n".repeat(cap));
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn read_empty_file() {
+        let (base, core) = sandbox("empty");
+        let file = path(base.join("root/a.txt"));
+        fs::write(&file, "").unwrap();
+        let read = core.read_file(&file, None, None).unwrap();
+        assert_eq!(read.content, "");
+        assert_eq!(read.line_count, 0);
         fs::remove_dir_all(base).unwrap();
     }
 }
