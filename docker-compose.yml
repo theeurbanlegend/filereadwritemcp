@@ -50,6 +50,10 @@ services:
     ports:
       - '80:80'
       - '443:443'
+    # The legal pages' operator details, read at runtime (served as /config.js)
+    env_file:
+      - path: ./web/.env
+        required: false
     environment:
       DOMAIN: ${DOMAIN:?set DOMAIN in router/.env}
       ACME_EMAIL: ${ACME_EMAIL:-}

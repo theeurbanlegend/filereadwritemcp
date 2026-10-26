@@ -9,3 +9,8 @@ interface ImportMetaEnv {
   readonly VITE_LEGAL_UPDATED?: string;
   readonly VITE_BACKUP_RETENTION_DAYS?: string;
 }
+
+interface Window {
+  // Set by /config.js before the app loads
+  __FRW_CONFIG__?: Partial<Record<string, string>>;
+}

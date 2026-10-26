@@ -1,6 +1,5 @@
 # Run the images built by .github/workflows/docker.yml instead of building on the server.
-# Use it through `make up-prebuilt`. The web image has the hosted deployment's legal-page
-# details built in, so self-hosters should keep building their own with `make up`.
+# Use it through `make up-prebuilt`.
 services:
   router:
     image: ${FRW_REGISTRY:-ghcr.io/theeurbanlegend}/frw-router:${FRW_TAG:-latest}

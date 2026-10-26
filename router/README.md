@@ -51,7 +51,7 @@ Edit `router/.env`:
 Don't set `MCP_API_KEYS` on a multi-user server: every static key logs in as the same shared user.
 
 The website's Privacy Policy and Terms name whoever runs the server. Fill them in before opening
-signups: in `web/.env`, set `VITE_OPERATOR_NAME`, `VITE_CONTACT_EMAIL`, `VITE_JURISDICTION` (governing law, e.g. `England and Wales`), `VITE_HOSTING_PROVIDER`, and `VITE_BACKUP_RETENTION_DAYS` to match your backup rotation. Bump `VITE_LEGAL_UPDATED` whenever you change the policies. These values are built into the site, so rebuild after changing them (`make deploy`, or `make build up`). Until they're set, the pages show placeholders like `[Operator name]`. Both pages are starting drafts, not legal advice: have them reviewed for your jurisdiction.
+signups: in `web/.env`, set `VITE_OPERATOR_NAME`, `VITE_CONTACT_EMAIL`, `VITE_JURISDICTION` (governing law, e.g. `England and Wales`), `VITE_HOSTING_PROVIDER`, and `VITE_BACKUP_RETENTION_DAYS` to match your backup rotation. Bump `VITE_LEGAL_UPDATED` whenever you change the policies. The web container reads these when it starts (they're served as `/config.js`, not built into the image), so run `make up` after changing them. Until they're set, the pages show placeholders like `[Operator name]`. Both pages are starting drafts, not legal advice: have them reviewed for your jurisdiction.
 
 ## 2. Start it
 
@@ -72,11 +72,10 @@ Building the images needs more memory than running them, and can fail on a 512 M
 `.github/workflows/docker.yml` builds both images on GitHub's runners and pushes them to GHCR on
 every push to `main`. `make up-prebuilt` pulls and starts those instead of building.
 
-The web image has the legal-page details built in, so set the `VITE_*` values from `web/.env`
-as repo variables (Settings → Secrets and variables → Actions → Variables) before it runs. To
-use the images from your own fork, set `FRW_REGISTRY=ghcr.io/<your-user>` in `router/.env`. If
-the GHCR packages are private, make them public in the package settings or `docker login ghcr.io`
-on the server.
+The images hold no configuration: the router reads `router/.env` and the web container reads
+`web/.env` at runtime, so the same images work for any deployment. To use the images from your
+own fork, set `FRW_REGISTRY=ghcr.io/<your-user>` in `router/.env`. If the GHCR packages are
+private, make them public in the package settings or `docker login ghcr.io` on the server.
 
 ### Email (Resend)
 1. In Resend, add and verify your sending domain (DNS records).

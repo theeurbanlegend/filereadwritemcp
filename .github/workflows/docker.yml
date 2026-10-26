@@ -19,29 +19,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # web/.env is gitignored. The legal pages' operator details are built into the site,
-      # so they come from repo variables (Settings → Secrets and variables → Actions → Variables).
-      - name: Write web/.env
-        if: matrix.service == 'web'
-        env:
-          VITE_OPERATOR_NAME: ${{ vars.VITE_OPERATOR_NAME }}
-          VITE_CONTACT_EMAIL: ${{ vars.VITE_CONTACT_EMAIL }}
-          VITE_JURISDICTION: ${{ vars.VITE_JURISDICTION }}
-          VITE_HOSTING_PROVIDER: ${{ vars.VITE_HOSTING_PROVIDER }}
-          VITE_LEGAL_UPDATED: ${{ vars.VITE_LEGAL_UPDATED }}
-          VITE_BACKUP_RETENTION_DAYS: ${{ vars.VITE_BACKUP_RETENTION_DAYS }}
-          VITE_GITHUB_REPO: ${{ vars.VITE_GITHUB_REPO }}
-        run: |
-          cp web/.env.example web/.env
-          for name in VITE_OPERATOR_NAME VITE_CONTACT_EMAIL VITE_JURISDICTION VITE_HOSTING_PROVIDER \
-                      VITE_LEGAL_UPDATED VITE_BACKUP_RETENTION_DAYS VITE_GITHUB_REPO; do
-            value="${!name}"
-            if [ -n "$value" ]; then
-              sed -i "/^$name=/d" web/.env
-              printf '%s=%s\n' "$name" "$value" >> web/.env
-            fi
-          done
-
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3

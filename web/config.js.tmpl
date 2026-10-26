@@ -1,0 +1,11 @@
+// Served as /config.js by Caddy, which fills it from the web container's environment on each
+// request (see the Caddyfile), so the image itself holds no operator details.
+window.__FRW_CONFIG__ = {
+  VITE_OPERATOR_NAME: {{env "VITE_OPERATOR_NAME" | toJson}},
+  VITE_CONTACT_EMAIL: {{env "VITE_CONTACT_EMAIL" | toJson}},
+  VITE_JURISDICTION: {{env "VITE_JURISDICTION" | toJson}},
+  VITE_HOSTING_PROVIDER: {{env "VITE_HOSTING_PROVIDER" | toJson}},
+  VITE_LEGAL_UPDATED: {{env "VITE_LEGAL_UPDATED" | toJson}},
+  VITE_BACKUP_RETENTION_DAYS: {{env "VITE_BACKUP_RETENTION_DAYS" | toJson}},
+  VITE_GITHUB_REPO: {{env "VITE_GITHUB_REPO" | toJson}},
+};
