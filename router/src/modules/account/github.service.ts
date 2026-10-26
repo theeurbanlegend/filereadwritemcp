@@ -54,10 +54,17 @@ export class GithubAuthService {
         }),
       },
     );
-    const { access_token } = (await tokenRes.json()) as {
-      access_token?: string;
-    };
-    if (!access_token) throw new UnauthorizedException('GitHub login failed');
+    const { access_token, error, error_description } =
+      (await tokenRes.json()) as {
+        access_token?: string;
+        error?: string;
+        error_description?: string;
+      };
+    if (!access_token) {
+      throw new UnauthorizedException(
+        `GitHub token exchange failed: ${error_description ?? error ?? `HTTP ${tokenRes.status}`}`,
+      );
+    }
 
     const headers = {
       Authorization: `Bearer ${access_token}`,
@@ -69,7 +76,9 @@ export class GithubAuthService {
       fetch('https://api.github.com/user/emails', { headers }),
     ]);
     if (!userRes.ok || !emailsRes.ok) {
-      throw new UnauthorizedException('GitHub login failed');
+      throw new UnauthorizedException(
+        `GitHub API request failed (user: HTTP ${userRes.status}, emails: HTTP ${emailsRes.status})`,
+      );
     }
     const user = (await userRes.json()) as { id: number };
     const emails = (await emailsRes.json()) as GithubEmail[];

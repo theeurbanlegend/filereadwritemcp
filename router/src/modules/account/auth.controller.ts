@@ -7,6 +7,7 @@ import {
   HttpCode,
   HttpException,
   HttpStatus,
+  Logger,
   NotFoundException,
   Post,
   Query,
@@ -56,6 +57,8 @@ function requirePassword(password: unknown): string {
 @Controller('api/auth')
 @Throttle({ default: { limit: 10, ttl: 60_000 } })
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(
     private readonly users: UsersService,
     private readonly sessions: SessionService,
@@ -217,7 +220,8 @@ export class AuthController {
       }
       await this.sessions.start(res, user.id);
       return res.redirect(safeNext(next));
-    } catch {
+    } catch (err) {
+      this.logger.warn(`GitHub login failed: ${String(err)}`);
       return res.redirect('/login?error=github');
     }
   }
