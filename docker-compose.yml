@@ -1,0 +1,68 @@
+name: frw
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '5'
+
+services:
+  db:
+    image: postgres:18-alpine
+    logging: *logging
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mcp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in router/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-mcp}
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-mcp} -d ${POSTGRES_DB:-mcp}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  router:
+    build: ./router
+    logging: *logging
+    restart: unless-stopped
+    env_file: ./router/.env
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgres://${POSTGRES_USER:-mcp}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-mcp}
+      RELEASES_DIR: /data/releases
+    volumes:
+      - releases_data:/data/releases
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - '3000'
+
+  web:
+    build: ./web
+    logging: *logging
+    restart: unless-stopped
+    depends_on:
+      - router
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in router/.env}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  db_data:
+    name: router_db_data
+  caddy_data:
+    name: router_caddy_data
+  caddy_config:
+    name: router_caddy_config
+  releases_data:
+    name: router_releases_data

@@ -1,0 +1,19 @@
+name: Uptime check
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  health:
+    if: vars.HEALTH_URL != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check router health
+        run: |
+          for attempt in 1 2 3; do
+            if curl -fsS --max-time 10 "${{ vars.HEALTH_URL }}"; then exit 0; fi
+            sleep 20
+          done
+          echo "::error::${{ vars.HEALTH_URL }} failed 3 checks"
+          exit 1

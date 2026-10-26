@@ -1,0 +1,113 @@
+name: Build and Release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  # Gate: on a tagged release the git tag must equal agent/Cargo.toml's version,
+  # or the whole pipeline fails. Prevents tag/version drift — the binary reports
+  # its Cargo version, so a mismatched tag causes self-update downgrade/loop bugs.
+  # Skipped on manual workflow_dispatch runs (no tag to check).
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches agent/Cargo.toml version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          CARGO_VER="$(grep -m1 '^version *= *' agent/Cargo.toml | cut -d '"' -f2)"
+          echo "tag=$TAG  cargo=$CARGO_VER"
+          if [ "$TAG" != "$CARGO_VER" ]; then
+            echo "::error::Git tag v$TAG does not match agent/Cargo.toml version $CARGO_VER. Bump Cargo.toml and re-tag."
+            exit 1
+          fi
+          echo "OK: tag v$TAG matches Cargo version $CARGO_VER"
+
+  build:
+    needs: [verify]
+    strategy:
+      matrix:
+        target:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            ext: ".exe"
+
+    runs-on: ${{ matrix.target.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target.target }} --manifest-path agent/Cargo.toml
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.target.target }}
+          path: agent/target/${{ matrix.target.target }}/release/agent${{ matrix.target.ext }}
+
+  release:
+    needs: [build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: Prepare release assets
+        run: |
+          echo "=== Downloaded artifacts ==="
+          ls -la
+          echo
+
+          for dir in agent-*/; do
+            name="${dir%/}"
+            echo "Processing: $dir"
+            if [ -f "$dir/agent" ]; then
+              mv "$dir/agent" "./${name}.tmp"
+              rmdir "$dir"
+              mv "./${name}.tmp" "./$name"
+              chmod +x "./$name"
+              echo "  Created: $name ($(wc -c < "$name") bytes)"
+            else
+              file_in_dir=$(ls "$dir" 2>/dev/null | head -1)
+              if [ -n "$file_in_dir" ]; then
+                mv "$dir/$file_in_dir" "./${name}.tmp"
+                rmdir "$dir"
+                mv "./${name}.tmp" "./$name"
+                chmod +x "./$name"
+                echo "  Created: $name (from $file_in_dir)"
+              else
+                echo "  Empty directory, skipping"
+                rmdir "$dir"
+              fi
+            fi
+          done
+
+          echo
+          echo "=== Checksums ==="
+          sha256sum agent-* > SHA256SUMS
+          cat SHA256SUMS
+
+          echo
+          echo "=== Release assets ==="
+          ls -la agent-* SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            agent-*
+            SHA256SUMS
+          generate_release_notes: true

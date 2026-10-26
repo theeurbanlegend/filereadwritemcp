@@ -1,0 +1,62 @@
+name: frw-dev
+
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mcp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mcp}
+      POSTGRES_DB: ${POSTGRES_DB:-mcp}
+      PGDATA: /var/lib/postgresql/data
+    ports:
+      - '${DEV_DB_PORT:-5432}:5432'
+    volumes:
+      - db_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-mcp} -d ${POSTGRES_DB:-mcp}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  router:
+    build:
+      context: ./router
+      dockerfile: Dockerfile.dev
+    env_file:
+      - path: ./router/.env
+        required: false
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DATABASE_URL: postgres://${POSTGRES_USER:-mcp}:${POSTGRES_PASSWORD:-mcp}@db:5432/${POSTGRES_DB:-mcp}
+      OAUTH_ISSUER: http://localhost:5173
+      MCP_RESOURCE_URL: http://localhost:5173/mcp
+      JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-not-for-production-use}
+      RELEASES_DIR: /tmp/releases
+    volumes:
+      - ./router:/app
+      - /app/node_modules
+    ports:
+      - '3000:3000'
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.dev
+    environment:
+      ROUTER_URL: http://router:3000
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+    ports:
+      - '5173:5173'
+    depends_on:
+      - router
+
+volumes:
+  db_dev_data:
+    name: router_db_dev_data

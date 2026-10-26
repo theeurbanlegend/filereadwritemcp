@@ -1,0 +1,9 @@
+This repository contains two components under different licenses:
+
+- agent/   MIT License             (see agent/LICENSE)
+- router/  GNU AGPL v3.0 only      (see router/LICENSE)
+
+Files outside those directories are licensed under the MIT License unless
+stated otherwise.
+
+Copyright (c) 2026 theeurbanlegend

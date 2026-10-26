@@ -1,0 +1,27 @@
+# DOMAIN and ACME_EMAIL are injected from the environment by docker-compose.
+# For local testing without a real domain, set DOMAIN=localhost (Caddy uses its internal CA).
+
+{$DOMAIN} {
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	@router path /api/* /mcp /mcp/* /authorize /token /register /.well-known/* /agent/* /socket.io/*
+	handle @router {
+		reverse_proxy router:3000
+	}
+
+	handle {
+		header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}
