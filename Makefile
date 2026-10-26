@@ -1,9 +1,10 @@
 ENV_FILE := $(if $(wildcard router/.env),--env-file router/.env)
 COMPOSE := docker compose $(ENV_FILE)
 DEV_COMPOSE := docker compose $(ENV_FILE) -f docker-compose.dev.yml
+PREBUILT_COMPOSE := docker compose $(ENV_FILE) -f docker-compose.yml -f docker-compose.prebuilt.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help build up down restart logs ps sh db-shell migrate migrate-revert backup restore deploy \
+.PHONY: help build up up-prebuilt down restart logs ps sh db-shell migrate migrate-revert backup restore deploy \
 	dev dev-db dev-down dev-logs dev-ps dev-sh dev-db-shell dev-migrate
 
 help: ## Show available targets
@@ -14,6 +15,9 @@ build: ## Build the router and web images
 
 up: ## Start db, router and web (Caddy) in the background
 	$(COMPOSE) up -d --remove-orphans
+
+up-prebuilt: ## Pull the CI-built router and web images from GHCR and start (no build on the server)
+	$(PREBUILT_COMPOSE) up -d --remove-orphans
 
 down: ## Stop and remove containers (volumes kept)
 	$(COMPOSE) down

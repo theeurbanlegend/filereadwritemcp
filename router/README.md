@@ -66,6 +66,18 @@ make logs      # follow the logs
 Check it's up: `https://<your-domain>` should show the landing page, and
 `https://<your-domain>/.well-known/oauth-authorization-server` should return JSON.
 
+### Small servers: use prebuilt images
+
+Building the images needs more memory than running them, and can fail on a 512 MB server.
+`.github/workflows/docker.yml` builds both images on GitHub's runners and pushes them to GHCR on
+every push to `main`. `make up-prebuilt` pulls and starts those instead of building.
+
+The web image has the legal-page details built in, so set the `VITE_*` values from `web/.env`
+as repo variables (Settings → Secrets and variables → Actions → Variables) before it runs. To
+use the images from your own fork, set `FRW_REGISTRY=ghcr.io/<your-user>` in `router/.env`. If
+the GHCR packages are private, make them public in the package settings or `docker login ghcr.io`
+on the server.
+
 ### Email (Resend)
 1. In Resend, add and verify your sending domain (DNS records).
 2. Create an API key with "Sending access" and set `RESEND_API_KEY`.
@@ -119,6 +131,7 @@ SHA-256 before installing it. Users can turn auto-update off with `frw-agent con
 | Logs | `make logs` |
 | Restart the router | `make restart` |
 | Update to the latest code | `make deploy` (pulls, rebuilds, restarts), then `make migrate` |
+| Update with prebuilt images | `make up-prebuilt` (pulls the latest images, restarts), then `make migrate` |
 | Database shell | `make db-shell` |
 | Undo the last migration | `make migrate-revert` |
 | Back up the database | `make backup` (writes `backups/mcp-<timestamp>.sql.gz`) |
