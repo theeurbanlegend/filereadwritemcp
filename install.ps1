@@ -24,9 +24,43 @@ $Asset = 'agent-x86_64-pc-windows-msvc'
 $Tmp = Join-Path ([IO.Path]::GetTempPath()) ("frw-" + [Guid]::NewGuid())
 New-Item -ItemType Directory -Path $Tmp | Out-Null
 
+# Download with a percentage bar. Invoke-WebRequest's own progress shows only bytes on
+# Windows PowerShell 5.1 and slows the download down a lot, so update it once per percent.
+function Get-FileWithProgress($Uri, $OutFile) {
+    $Response = [Net.WebRequest]::Create($Uri).GetResponse()
+    try {
+        $Total = $Response.ContentLength
+        $In = $Response.GetResponseStream()
+        $Out = [IO.File]::Create($OutFile)
+        try {
+            $Buffer = New-Object byte[] 65536
+            $Done = 0
+            $LastPercent = -1
+            while (($Read = $In.Read($Buffer, 0, $Buffer.Length)) -gt 0) {
+                $Out.Write($Buffer, 0, $Read)
+                $Done += $Read
+                if ($Total -gt 0) {
+                    $Percent = [int][Math]::Floor(100 * $Done / $Total)
+                    if ($Percent -ne $LastPercent) {
+                        $Status = '{0:N1} / {1:N1} MB' -f ($Done / 1MB), ($Total / 1MB)
+                        Write-Progress -Activity "Downloading $Asset" -Status $Status -PercentComplete $Percent
+                        $LastPercent = $Percent
+                    }
+                }
+            }
+        } finally {
+            $Out.Dispose()
+            $In.Dispose()
+        }
+    } finally {
+        $Response.Dispose()
+    }
+    Write-Progress -Activity "Downloading $Asset" -Completed
+}
+
 try {
     Write-Host "Downloading $Asset ($Version)..."
-    Invoke-WebRequest -UseBasicParsing -Uri "$Base/$Asset" -OutFile (Join-Path $Tmp $Asset)
+    Get-FileWithProgress "$Base/$Asset" (Join-Path $Tmp $Asset)
     Invoke-WebRequest -UseBasicParsing -Uri "$Base/SHA256SUMS" -OutFile (Join-Path $Tmp 'SHA256SUMS')
 
     $Expected = Get-Content (Join-Path $Tmp 'SHA256SUMS') |
