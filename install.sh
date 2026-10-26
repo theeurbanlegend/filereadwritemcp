@@ -38,7 +38,9 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 
 asset="agent-$target"
 echo "Downloading $asset ($VERSION)..."
-curl -fsSL "$base/$asset" -o "$tmp/$asset" || fail "download failed: $base/$asset"
+# Show a progress bar when stderr is a terminal (it still is under `curl ... | sh`)
+if [ -t 2 ]; then progress=--progress-bar; else progress=--silent; fi
+curl -fSL "$progress" "$base/$asset" -o "$tmp/$asset" || fail "download failed: $base/$asset"
 curl -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS" || fail "download failed: $base/SHA256SUMS"
 
 expected=$(awk -v f="$asset" '$2 == f || $2 == "*" f { print $1 }' "$tmp/SHA256SUMS")
