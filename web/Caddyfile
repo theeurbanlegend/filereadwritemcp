@@ -18,6 +18,16 @@
 		reverse_proxy router:3000
 	}
 
+	# Operator details for the legal pages, filled from this container's environment (web/.env)
+	handle /config.js {
+		header Cache-Control "no-cache"
+		root * /etc/caddy/runtime
+		templates {
+			mime text/javascript application/javascript
+		}
+		file_server
+	}
+
 	handle {
 		header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
 		root * /srv

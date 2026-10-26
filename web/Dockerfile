@@ -8,4 +8,5 @@ RUN yarn build
 
 FROM caddy:2-alpine
 COPY Caddyfile /etc/caddy/Caddyfile
+COPY config.js.tmpl /etc/caddy/runtime/config.js
 COPY --from=builder /app/dist /srv
