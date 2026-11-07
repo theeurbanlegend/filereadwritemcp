@@ -32,7 +32,14 @@ export class McpController {
     let transport = sessionId ? this.transports.get(sessionId) : undefined;
 
     if (!transport) {
-      if (sessionId || !isInitializeRequest(req.body)) {
+      if (sessionId) {
+        return res.status(404).json({
+          jsonrpc: '2.0',
+          id: null,
+          error: { code: -32001, message: 'Session not found' },
+        });
+      }
+      if (!isInitializeRequest(req.body)) {
         return res.status(400).json({
           jsonrpc: '2.0',
           id: null,
@@ -78,7 +85,9 @@ export class McpController {
     const sid = req.headers['mcp-session-id'] as string | undefined;
     const t = sid ? this.transports.get(sid) : undefined;
     if (!t) {
-      res.status(400).send('Invalid or missing session ID');
+      res
+        .status(sid ? 404 : 400)
+        .send(sid ? 'Session not found' : 'Missing session ID');
       return undefined;
     }
     return t;
