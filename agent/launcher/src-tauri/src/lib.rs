@@ -6,6 +6,7 @@ mod lifecycle;
 mod notify;
 mod prefs;
 mod protocol;
+mod shell_path;
 mod tray;
 mod updates;
 mod windows;
@@ -41,6 +42,7 @@ fn on_main_close(app: &tauri::AppHandle) {
 }
 
 pub fn run() {
+    shell_path::preload();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             windows::show_main(app, None);

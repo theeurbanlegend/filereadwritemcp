@@ -49,6 +49,9 @@ pub struct SettingsForm {
 
 pub fn command(agent: &Path) -> Command {
     let mut command = Command::new(agent);
+    if let Some(path) = crate::shell_path::login_path() {
+        command.env("PATH", path);
+    }
     #[cfg(windows)]
     command.creation_flags(0x0800_0000);
     command.kill_on_drop(true);

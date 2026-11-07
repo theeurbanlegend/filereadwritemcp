@@ -101,6 +101,14 @@ impl FileToolsCore {
         hash: Option<&str>,
     ) -> Result<WriteFileResult, std::io::Error> {
         let safe = self.assert_allowed(target_path)?;
+        if let (Some(from), Some(to)) = (from_line, to_line)
+            && from > to
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("fromLine ({from}) must not be greater than toLine ({to})"),
+            ));
+        }
         let exists = Path::new(&safe).exists();
 
         if exists {
@@ -146,6 +154,12 @@ impl FileToolsCore {
 
     pub fn delete_folder(&self, target_path: &str) -> Result<(), std::io::Error> {
         let safe = self.assert_allowed(target_path)?;
+        if self.allowed_dirs.contains(&safe) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Refusing to delete an allowed root folder. Delete the files inside it instead.",
+            ));
+        }
         fs::remove_dir_all(&safe)
     }
 
@@ -196,7 +210,7 @@ impl FileToolsCore {
         case_insensitive: bool,
     ) -> Result<SearchNamesResult, std::io::Error> {
         let safe = self.assert_allowed(target_path)?;
-        let re = self.build_regex(query_regex, case_insensitive);
+        let re = self.build_regex(query_regex, case_insensitive)?;
         let ignore = default_ignore_set();
 
         let mut files = Vec::new();
@@ -236,7 +250,7 @@ impl FileToolsCore {
         case_insensitive: bool,
     ) -> Result<SearchContentResult, std::io::Error> {
         let safe = self.assert_allowed(target_path)?;
-        let re = self.build_regex(query_regex, case_insensitive);
+        let re = self.build_regex(query_regex, case_insensitive)?;
         let (files, truncated) = self.search_file_contents(&safe, &re);
         Ok(SearchContentResult { files, truncated })
     }
@@ -579,13 +593,27 @@ impl FileToolsCore {
         Ok((lines, false))
     }
 
-    fn build_regex(&self, pattern: &str, case_insensitive: bool) -> Regex {
-        let pattern = if case_insensitive && !pattern.starts_with("(?i)") {
+    fn build_regex(&self, pattern: &str, case_insensitive: bool) -> Result<Regex, std::io::Error> {
+        let full = if case_insensitive && !pattern.starts_with("(?i)") {
             format!("(?i){}", pattern)
         } else {
             pattern.to_string()
         };
-        Regex::new(&pattern).expect("Invalid regex pattern")
+        Regex::new(&full).map_err(|e| {
+            let detail = match e {
+                regex::Error::Syntax(s) => s
+                    .lines()
+                    .rev()
+                    .find(|l| l.starts_with("error:"))
+                    .map(|l| l.trim_start_matches("error:").trim().to_string())
+                    .unwrap_or(s),
+                other => other.to_string(),
+            };
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Invalid regex \"{pattern}\": {detail}"),
+            )
+        })
     }
 }
 
@@ -746,6 +774,45 @@ mod tests {
         let read = core.read_file(&file, None, None).unwrap();
         assert_eq!(read.content, "");
         assert_eq!(read.line_count, 0);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_delete_an_allowed_root() {
+        let (base, core) = sandbox("delete-root");
+        let err = core.delete_folder(&path(base.join("root"))).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(base.join("root/sub").exists());
+        core.delete_folder(&path(base.join("root/sub"))).unwrap();
+        assert!(!base.join("root/sub").exists());
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn rejects_an_inverted_line_range() {
+        let (base, core) = sandbox("inverted");
+        let file = path(base.join("root/a.txt"));
+        fs::write(&file, "1\n2\n3\n4\n").unwrap();
+        let hash = core.read_file(&file, None, None).unwrap().hash;
+        let err = core
+            .write_file(&file, "x", Some(4), Some(2), Some(&hash))
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "1\n2\n3\n4\n");
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn an_invalid_regex_is_an_error_not_a_panic() {
+        let (base, core) = sandbox("bad-regex");
+        let root = path(base.join("root"));
+        let err = core.search_content(&root, "line t(wo", true).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(
+            err.to_string(),
+            "Invalid regex \"line t(wo\": unclosed group"
+        );
+        assert!(core.search_names(&root, "[", false).is_err());
         fs::remove_dir_all(base).unwrap();
     }
 }
