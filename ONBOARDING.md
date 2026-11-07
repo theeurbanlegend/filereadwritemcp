@@ -46,7 +46,7 @@ CLI-created users are already verified. Pass `--password <pw>` to choose the pas
 ## Step 3: Set up the agent on the user's machine
 
 The agent is a single binary for macOS, Linux and Windows. The dashboard's **Add a machine**
-panel shows the install command; it's also in [agent/README.md](agent/README.md):
+panel shows the install command; it's also in [agent/binary/README.md](agent/binary/README.md):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/theeurbanlegend/filereadwritemcp/main/install.sh | sh   # macOS / Linux
@@ -102,7 +102,7 @@ To change these, run `frw-agent config` and restart the agent. Other commands:
 | `frw-agent config` | Edit a profile's router URL, roots, executables and auto-update |
 
 To start the agent automatically at login, see "Run it in the background" in
-[agent/README.md](agent/README.md).
+[agent/binary/README.md](agent/binary/README.md).
 
 ---
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { errorMessage } from '../../api/client';
 import { useCreateEnrollmentCode } from '../../hooks/mutations/agents';
 import { useAgents } from '../../hooks/queries/agents';
@@ -16,14 +16,25 @@ export function MachinesCard() {
   const list = agents.data?.agents ?? [];
   const limit = agents.data?.limit;
   const full = limit !== undefined && list.length >= limit;
+  const [knownIds, setKnownIds] = useState<Set<string> | null>(null);
+
+  useEffect(() => {
+    if (adding && knownIds === null && agents.data) {
+      setKnownIds(new Set(agents.data.agents.map((a) => a.id)));
+    }
+  }, [adding, knownIds, agents.data]);
+
+  const joined = adding && knownIds ? list.find((a) => !knownIds.has(a.id)) : undefined;
 
   function openPanel() {
+    setKnownIds(agents.data ? new Set(list.map((a) => a.id)) : null);
     setAdding(true);
     mint.mutate();
   }
 
   function closePanel() {
     setAdding(false);
+    setKnownIds(null);
     mint.reset();
     void agents.refetch();
   }
@@ -43,7 +54,7 @@ export function MachinesCard() {
         )}
       </div>
       {full && !adding && <p className="muted small">You've reached your machine limit. Revoke one to add another.</p>}
-      {adding && <AddMachinePanel mint={mint} onClose={closePanel} />}
+      {adding && <AddMachinePanel mint={mint} joined={joined} onClose={closePanel} />}
       {agents.error && <Alert>{errorMessage(agents.error)}</Alert>}
       {agents.isPending ? (
         <p className="muted">Loading…</p>

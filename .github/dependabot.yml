@@ -1,7 +1,7 @@
 version: 2
 updates:
   - package-ecosystem: cargo
-    directory: /agent
+    directory: /agent/binary
     schedule:
       interval: weekly
     groups:

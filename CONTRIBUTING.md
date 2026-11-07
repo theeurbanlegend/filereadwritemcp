@@ -20,7 +20,7 @@ CI runs these on every PR, so run them locally first:
 
 Agent:
 ```bash
-cd agent
+cd agent/binary
 cargo fmt --check
 cargo clippy -- -D warnings
 cargo build
@@ -58,7 +58,7 @@ If you change the database entities, add a migration with `NAME=YourChange yarn 
   explain itself.
 - The agent is the security boundary. Changes to path checks, the allow-lists, command approval
   or self-update need a clear explanation of why they're safe.
-- A new tool needs both halves: the implementation in `agent/src/common/` and its registration in
+- A new tool needs both halves: the implementation in `agent/binary/src/common/` and its registration in
   `router/src/modules/mcp/mcp.service.ts`. Update `skills/file-read-write/SKILL.md` too.
 - Update the README or docs when behavior users see changes.
 

@@ -1,12 +1,9 @@
 import { Link } from 'react-router-dom';
-import { Icon } from '../ui/Icon';
 
 export function Brand() {
   return (
     <Link to="/" className="brand">
-      <span className="brand-mark">
-        <Icon name="code" />
-      </span>
+      <img className="brand-mark" src="/favicon.svg" alt="" aria-hidden="true" draggable={false} />
       <span className="brand-name gradient-text">FileReadWrite</span>
     </Link>
   );

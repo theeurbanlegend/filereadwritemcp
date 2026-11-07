@@ -148,6 +148,28 @@ It runs in your session (a console window stays open), so approval popups appear
 With auto-update on (the default), the agent downloads new releases from your router, checks the
 SHA-256, replaces itself and restarts. Turn it off with `frw-agent config`.
 
+## Launcher mode
+
+```sh
+frw-agent --launched-from launcher --profile personal
+```
+
+For the desktop launcher. stdout carries only JSON lines (`started`, `connected`, `disconnected`,
+`approval`, `update`, `stopping`), logs stay on stderr, and command approvals are answered by
+writing `{"type":"decision","id":<id>,"approved":true|false}` to stdin. If stdin closes, every
+approval is denied.
+
+Exit codes:
+
+| Code | Meaning |
+| ---- | ------- |
+| 0    | Stopped (SIGTERM / Ctrl-C) |
+| 1    | Any other startup error |
+| 75   | Updated itself; start it again to run the new version |
+| 78   | The `--profile` it was given doesn't exist (also from `config -p`) |
+
+Outside launcher mode the agent restarts itself after an update (Unix `exec`, Windows spawn + exit 0).
+
 ## Testing on Windows
 
 CI compiles and unit-tests the agent on Windows. These need a real Windows machine:
