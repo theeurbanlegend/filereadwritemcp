@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Gate: on a tagged release the git tag must equal agent/Cargo.toml's version,
+  # Gate: on a tagged release the git tag must equal agent/binary/Cargo.toml's version,
   # or the whole pipeline fails. Prevents tag/version drift — the binary reports
   # its Cargo version, so a mismatched tag causes self-update downgrade/loop bugs.
   # Skipped on manual workflow_dispatch runs (no tag to check).
@@ -14,17 +14,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Tag matches agent/Cargo.toml version
+      - name: Tag matches agent/binary/Cargo.toml version
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          CARGO_VER="$(grep -m1 '^version *= *' agent/Cargo.toml | cut -d '"' -f2)"
+          CARGO_VER="$(grep -m1 '^version *= *' agent/binary/Cargo.toml | cut -d '"' -f2)"
           echo "tag=$TAG  cargo=$CARGO_VER"
           if [ "$TAG" != "$CARGO_VER" ]; then
-            echo "::error::Git tag v$TAG does not match agent/Cargo.toml version $CARGO_VER. Bump Cargo.toml and re-tag."
+            echo "::error::Git tag v$TAG does not match agent/binary/Cargo.toml version $CARGO_VER. Bump Cargo.toml and re-tag."
             exit 1
           fi
           echo "OK: tag v$TAG matches Cargo version $CARGO_VER"
+
+      - name: Tag matches the launcher version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG_VER="$(node -p "require('./agent/launcher/package.json').version")"
+          CRATE_VER="$(grep -m1 '^version *= *' agent/launcher/src-tauri/Cargo.toml | cut -d '"' -f2)"
+          echo "tag=$TAG  package.json=$PKG_VER  Cargo.toml=$CRATE_VER"
+          if [ "$TAG" != "$PKG_VER" ] || [ "$TAG" != "$CRATE_VER" ]; then
+            echo "::error::Git tag v$TAG must match agent/launcher/package.json ($PKG_VER) and agent/launcher/src-tauri/Cargo.toml ($CRATE_VER)."
+            exit 1
+          fi
 
   build:
     needs: [verify]
@@ -51,22 +63,103 @@ jobs:
           targets: ${{ matrix.target.target }}
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target.target }} --manifest-path agent/Cargo.toml
+        run: cargo build --release --target ${{ matrix.target.target }} --manifest-path agent/binary/Cargo.toml
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: agent-${{ matrix.target.target }}
-          path: agent/target/${{ matrix.target.target }}/release/agent${{ matrix.target.ext }}
+          path: agent/binary/target/${{ matrix.target.target }}/release/agent-binary${{ matrix.target.ext }}
+
+  launcher:
+    needs: [verify]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: agent/launcher
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+          cache-dependency-path: agent/launcher/yarn.lock
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build the bundled agent
+        env:
+          TAURI_ENV_TARGET_TRIPLE: ${{ matrix.target }}
+        run: node scripts/prepare-agent.mjs --release
+
+      - name: Build the launcher
+        run: |
+          args=(--target "${{ matrix.target }}")
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+              echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set, so released launchers could not update themselves."
+              exit 1
+            fi
+            echo "::warning::No updater signing key; building without update artifacts."
+            args+=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
+          fi
+          yarn tauri build "${args[@]}"
+
+      - name: Collect installers
+        run: node scripts/collect-bundles.mjs --target "${{ matrix.target }}" --out ../../launcher-out
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: launcher-${{ matrix.target }}
+          path: launcher-out/*
+          if-no-files-found: error
 
   release:
-    needs: [build]
+    needs: [build, launcher]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: agent/launcher/scripts
+
       - uses: actions/download-artifact@v4
+        with:
+          path: release
 
       - name: Prepare release assets
+        working-directory: release
         run: |
           echo "=== Downloaded artifacts ==="
           ls -la
@@ -96,18 +189,27 @@ jobs:
             fi
           done
 
+          for dir in launcher-*/; do
+            mv "$dir"* .
+            rmdir "$dir"
+          done
+
+          node ../agent/launcher/scripts/latest-json.mjs --dir . --tag "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"
+
           echo
           echo "=== Checksums ==="
-          sha256sum agent-* > SHA256SUMS
+          sha256sum agent-* $(ls FileReadWrite-* | grep -v '\.sig$') > SHA256SUMS
           cat SHA256SUMS
 
           echo
           echo "=== Release assets ==="
-          ls -la agent-* SHA256SUMS
+          ls -la agent-* FileReadWrite-* SHA256SUMS
 
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            agent-*
-            SHA256SUMS
+            release/agent-*
+            release/FileReadWrite-*
+            release/latest.json
+            release/SHA256SUMS
           generate_release_notes: true

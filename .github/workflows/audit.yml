@@ -4,7 +4,7 @@ on:
     - cron: '0 6 * * 1'
   pull_request:
     paths:
-      - 'agent/Cargo.lock'
+      - 'agent/binary/Cargo.lock'
       - 'router/yarn.lock'
       - 'web/yarn.lock'
   workflow_dispatch:
@@ -18,7 +18,7 @@ jobs:
         with:
           tool: cargo-audit
       - run: cargo audit
-        working-directory: agent
+        working-directory: agent/binary
 
   node:
     runs-on: ubuntu-latest

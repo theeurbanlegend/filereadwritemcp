@@ -1,7 +1,7 @@
 use crate::common::lib::curl;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// The compile-time target triple (e.g. "aarch64-apple-darwin"), injected by build.rs.
@@ -15,11 +15,11 @@ fn sha256_hex(path: &Path) -> std::io::Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Download the target-matched binary from the router, verify its SHA-256,
-/// atomically replace the running executable, and re-exec into the new version.
-///
-/// On success this never returns — the process image is replaced by `exec`.
-pub fn apply_update(router_url: &str, token: &str, expected_sha: &str) -> Result<(), String> {
+pub fn install_update(
+    router_url: &str,
+    token: &str,
+    expected_sha: &str,
+) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let tmp = exe.with_extension("new");
     let tmp_str = tmp.to_str().ok_or("temp path is not valid UTF-8")?;
@@ -58,7 +58,10 @@ pub fn apply_update(router_url: &str, token: &str, expected_sha: &str) -> Result
     // Atomically swap the running executable for the downloaded binary.
     self_replace::self_replace(&tmp).map_err(|e| e.to_string())?;
     let _ = fs::remove_file(&tmp);
+    Ok(exe)
+}
 
+pub fn restart(exe: &Path) -> Result<(), String> {
     log::info!("Binary replaced; re-executing into the new version");
     let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -66,12 +69,12 @@ pub fn apply_update(router_url: &str, token: &str, expected_sha: &str) -> Result
     {
         use std::os::unix::process::CommandExt;
         // exec replaces the current process image; only returns on failure.
-        let err = Command::new(&exe).args(&args).exec();
+        let err = Command::new(exe).args(&args).exec();
         Err(format!("re-exec failed: {err}"))
     }
     #[cfg(not(unix))]
     {
-        Command::new(&exe)
+        Command::new(exe)
             .args(&args)
             .spawn()
             .map_err(|e| e.to_string())?;

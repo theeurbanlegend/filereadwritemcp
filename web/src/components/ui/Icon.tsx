@@ -5,6 +5,7 @@ const PATHS = {
   logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9',
   plus: 'M12 5v14M5 12h14',
   copy: 'M9 9h11v11H9zM5 15H4V4h11v1',
+  download: 'M12 3v12M7 10l5 5 5-5M5 21h14',
   check: 'M20 6 9 17l-5-5',
   x: 'M18 6 6 18M6 6l12 12',
   terminal: 'M4 17l6-5-6-5M12 19h8',

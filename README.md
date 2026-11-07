@@ -66,7 +66,7 @@ it connects and stays running.
 | `frw-agent new` | Enroll this machine under another account or router as a new profile |
 | `frw-agent config` | Edit a profile: router URL, allowed folders, allowed programs, auto-update |
 
-[agent/README.md](agent/README.md) covers manual downloads, running the agent in the background
+[agent/binary/README.md](agent/binary/README.md) covers manual downloads, running the agent in the background
 at login on macOS, Linux and Windows, and building from source.
 
 #### Profiles and config
@@ -184,7 +184,7 @@ Key HTTP routes: `POST /mcp` (MCP), the OAuth endpoints (`/.well-known/*`, `/reg
 
 ### Agent
 ```bash
-cd agent
+cd agent/binary
 cargo run              # or: cargo run -- new / cargo run -- config / cargo run -- --profile <name>
 ```
 

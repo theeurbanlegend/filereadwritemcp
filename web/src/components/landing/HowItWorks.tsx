@@ -1,4 +1,5 @@
 import { mcpUrl } from '../../lib/navigation';
+import { DownloadApp } from '../install/DownloadApp';
 import { InstallCommands } from '../install/InstallCommands';
 import { CopyField } from '../ui/CopyField';
 import { Icon } from '../ui/Icon';
@@ -24,11 +25,13 @@ export function HowItWorks() {
             <span className="tag">02</span>
             <Icon name="terminal" />
           </div>
-          <h3>Install the agent</h3>
-          <p>
-            Run <code>frw-agent</code>, enter the code, and pick the folder it may use.
-          </p>
-          <InstallCommands />
+          <h3>Install FileReadWrite</h3>
+          <p>Open the app, paste the code, and pick the folders AI apps may use.</p>
+          <DownloadApp />
+          <details className="cli-fallback">
+            <summary>On a server? Install the command-line agent</summary>
+            <InstallCommands />
+          </details>
         </div>
         <div className="card step-card">
           <div className="step-card-top">

@@ -468,6 +468,9 @@ input[aria-invalid='true'] {
   background: var(--teal-bg);
   color: var(--teal);
 }
+.foot-success {
+  color: var(--teal);
+}
 .badge-offline {
   background: rgba(47, 52, 62, 0.5);
   color: var(--text-helper);
@@ -554,6 +557,39 @@ input[aria-invalid='true'] {
   color: var(--text);
   font-size: 0.82rem;
   line-height: 1.55;
+}
+.download-app {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.download-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.download-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+.link-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+.link-button:hover {
+  text-decoration: underline;
+}
+.cli-fallback summary {
+  cursor: pointer;
+  color: var(--text-helper);
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
 }
 .cmd-grid {
   display: grid;
@@ -646,6 +682,12 @@ input[aria-invalid='true'] {
   font-family: var(--font-display);
   font-weight: 600;
   font-size: 1.1rem;
+}
+.party-logo {
+  width: 40px;
+  height: 40px;
+  display: block;
+  flex: none;
 }
 .row-icon.dim {
   color: var(--text-helper);
@@ -809,12 +851,7 @@ input[aria-invalid='true'] {
 .brand-mark {
   width: 34px;
   height: 34px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius);
-  background: var(--surface-highest);
-  color: var(--accent);
-  box-shadow: 0 0 12px rgba(182, 217, 252, 0.15);
+  display: block;
   flex: none;
 }
 .nav {

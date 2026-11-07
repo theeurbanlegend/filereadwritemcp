@@ -2,6 +2,7 @@ use serde_json::{Value, json};
 
 use crate::common::{
     file_tools_core::FileToolsCore,
+    launcher,
     lib::request_approval,
     types::{ToolDescriptor, ToolTypeEnum},
 };
@@ -252,8 +253,12 @@ pub fn dispatch(core: &FileToolsCore, tool: ToolTypeEnum, args: Value) -> Result
             };
             let joined_args = argv.join(" ");
 
-            let preview = format!("{} {} \ncwd: {}", exe, joined_args, dir);
-            let approved = request_approval(&preview, 90);
+            let approved = if launcher::is_active() {
+                launcher::request_approval(exe, &argv, &dir, 90)
+            } else {
+                let preview = format!("{} {} \ncwd: {}", exe, joined_args, dir);
+                request_approval(&preview, 90)
+            };
 
             if !approved {
                 return Err("Command not approved by user. Nothing was run".to_string());

@@ -5,7 +5,7 @@ PREBUILT_COMPOSE := docker compose $(ENV_FILE) -f docker-compose.yml -f docker-c
 
 .DEFAULT_GOAL := help
 .PHONY: help build up up-prebuilt down restart logs ps sh db-shell migrate migrate-revert backup restore deploy \
-	dev dev-db dev-down dev-logs dev-ps dev-sh dev-db-shell dev-migrate
+	dev dev-db dev-down dev-logs dev-ps dev-sh dev-db-shell dev-migrate git-alias
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*## "} /^[a-z-]+:.*## / {printf "  make %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -85,3 +85,7 @@ dev-db-shell: ## Open psql in the dev database
 
 dev-migrate: ## Run migrations against the dev database
 	$(DEV_COMPOSE) exec router yarn run migration:run
+
+git-alias: ## Add the `git release` command to this clone
+	git config alias.release '!bash scripts/git-release.sh'
+	@echo "Added: git release (see git release --help)"

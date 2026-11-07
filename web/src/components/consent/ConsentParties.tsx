@@ -11,9 +11,7 @@ export function ConsentParties({ clientName }: { clientName: string | null }) {
         <Icon name="swap" size={22} />
       </span>
       <div className="party">
-        <span className="row-icon">
-          <Icon name="code" size={22} />
-        </span>
+        <img className="party-logo" src="/favicon.svg" alt="" draggable={false} />
         Your machines
       </div>
     </div>

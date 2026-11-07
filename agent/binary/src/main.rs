@@ -2,9 +2,10 @@ use crate::common::{
     constants::AGENT_VERSION,
     file_tools_core::FileToolsCore,
     file_tools_use::{dispatch, get_tools},
+    launcher::{self, Event, LaunchedFrom},
     lib::{clear_terminal, get_agent_dir},
-    profiles,
-    setup::setup,
+    profiles::{self, ConfigArgs},
+    setup::{NewArgs, setup_interactive, setup_noninteractive},
     types::ToolTypeEnum,
     updater,
 };
@@ -25,16 +26,118 @@ struct Cli {
     /// Run a specific config profile without the interactive picker (headless/service).
     #[arg(short, long)]
     profile: Option<String>,
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = LaunchedFrom::Tty,
+        help = "Who started the agent: a terminal (tty) or the desktop launcher (JSON lines on stdout/stdin)"
+    )]
+    launched_from: LaunchedFrom,
     #[command(subcommand)]
     command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Enroll a new machine as a config profile.
-    New,
-    /// Edit an existing profile's settings.
-    Config,
+    #[command(about = "Enroll a new machine as a config profile (prompts unless --code is given)")]
+    New(NewArgs),
+    #[command(about = "Edit or read a profile's settings (prompts unless flags are given)")]
+    Config(ConfigArgs),
+    #[command(about = "List config profiles")]
+    Profiles {
+        #[arg(long, help = "Print the profiles as JSON")]
+        json: bool,
+    },
+}
+
+fn fail(message: &str) -> ! {
+    fail_with(1, message)
+}
+
+fn fail_with(code: i32, message: &str) -> ! {
+    let one_line = message
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    eprintln!("{one_line}");
+    std::process::exit(code);
+}
+
+fn exit_if_profile_missing(agent_dir: &Path, name: &str) {
+    if let Some(message) = profiles::missing_profile(agent_dir, name) {
+        fail_with(launcher::PROFILE_MISSING_EXIT_CODE, &message);
+    }
+}
+
+fn run_config(agent_dir: &Path, args: &ConfigArgs) {
+    if !args.json && !args.has_changes() {
+        if let Err(e) = profiles::edit_interactive(agent_dir, args.profile.as_deref()) {
+            fail(&format!("Edit failed: {e}"));
+        }
+        println!("\nConfig saved. Now run the agent with no flags to start it.");
+        return;
+    }
+    let Some(name) = args.profile.as_deref() else {
+        fail("--profile is required with --json, --root, --exe or --auto-update");
+    };
+    exit_if_profile_missing(agent_dir, name);
+    let result = if args.has_changes() {
+        profiles::apply_changes(agent_dir, name, args)
+    } else {
+        profiles::details(agent_dir, name)
+    };
+    match result {
+        Ok(details) if args.json => match serde_json::to_string(&details) {
+            Ok(output) => println!("{output}"),
+            Err(e) => fail(&e.to_string()),
+        },
+        Ok(_) => println!("Updated profile '{name}'."),
+        Err(e) => fail(&e),
+    }
+}
+
+fn payload_reason(payload: &Payload, fallback: &str) -> String {
+    let reason = match payload {
+        Payload::Text(values) => values
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| v.to_string())
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+        _ => String::new(),
+    };
+    if reason.is_empty() {
+        fallback.to_string()
+    } else {
+        reason
+    }
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut terminate) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = terminate.recv() => {}
+                }
+            }
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 #[tokio::main]
@@ -49,26 +152,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     profiles::migrate_flat_if_needed(&agent_dir);
 
     match &cli.command {
-        Some(Commands::New) => {
-            let name = setup().unwrap_or_else(|e| {
-                eprintln!("Setup failed: {e}");
-                std::process::exit(1);
-            });
+        Some(Commands::New(args)) if args.is_empty() => {
+            let name = setup_interactive().unwrap_or_else(|e| fail(&format!("Setup failed: {e}")));
             println!("\nProfile '{name}' saved. Now run the agent with no flags to start it.");
             return Ok(());
         }
-        Some(Commands::Config) => {
-            if let Err(e) = profiles::edit(&agent_dir) {
-                eprintln!("Edit failed: {e}");
-                std::process::exit(1);
+        Some(Commands::New(args)) => {
+            match setup_noninteractive(&agent_dir, args) {
+                Ok(name) => println!("{name}"),
+                Err(e) => fail(&format!("Setup failed: {e}")),
             }
-            println!("\nConfig saved. Now run the agent with no flags to start it.");
+            return Ok(());
+        }
+        Some(Commands::Config(args)) => {
+            run_config(&agent_dir, args);
+            return Ok(());
+        }
+        Some(Commands::Profiles { json }) => {
+            let summaries = profiles::summaries(&agent_dir);
+            if *json {
+                println!("{}", serde_json::to_string(&summaries)?);
+            } else {
+                for profile in summaries {
+                    println!("{}\t{}", profile.name, profile.router_url);
+                }
+            }
             return Ok(());
         }
         None => {}
     }
 
-    // ---- run path: resolve the profile BEFORE any socket work ----
+    if cli.launched_from == LaunchedFrom::Launcher {
+        if cli.profile.is_none() {
+            fail("--launched-from launcher needs --profile <name>");
+        }
+        launcher::start();
+    }
+
+    if let Some(name) = cli.profile.as_deref() {
+        exit_if_profile_missing(&agent_dir, name);
+    }
+
     let profile = match profiles::resolve_for_run(&agent_dir, cli.profile.clone()) {
         Ok(Some(name)) => name,
         Ok(None) => {
@@ -78,7 +202,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 std::process::exit(1);
             }
-            setup().unwrap_or_else(|e| panic!("Error when setting up: {e}"))
+            setup_interactive().unwrap_or_else(|e| panic!("Error when setting up: {e}"))
         }
         Err(e) => {
             eprintln!("{e}");
@@ -130,6 +254,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::info!("To change this profile's settings, run `frw-agent config`");
     log::info!("Loaded {} allowed root(s)", allowed_dir_len);
     log::info!("Loaded {} allowed executables(s)", allowed_exec_len);
+    launcher::emit(Event::Started {
+        version: AGENT_VERSION.to_string(),
+        profile: profile.clone(),
+    });
 
     let core = std::sync::Arc::new(core);
 
@@ -142,7 +270,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .auth(json!({"token": token}))
         .reconnect_on_disconnect(true)
         .transport_type(rust_socketio::TransportType::Websocket)
-        .on("connect", |_, socket: Client| {
+        .on("open", |_, socket: Client| {
             async move {
                 let tools = get_tools();
                 socket
@@ -153,13 +281,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .await
                     .expect("Failed to emit hello");
                 log::info!("Connected to router; advertised {} tool(s).", tools.len());
+                launcher::emit(Event::Connected);
             }
             .boxed()
         })
         .on("call", {
             move |payload: Payload, socket: Client| {
                 let core = core.clone();
-                async move {
+                tokio::spawn(async move {
                     match payload {
                         Payload::Text(msgs) => {
                             if let Some(msg) = msgs.first().cloned() {
@@ -202,8 +331,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         _ => {}
                     }
-                }
-                .boxed()
+                });
+                async {}.boxed()
             }
         })
         .on("update-available", move |payload: Payload, _socket: Client| {
@@ -239,19 +368,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 log::info!("Update v{version} available — downloading and applying");
                 let res = tokio::task::spawn_blocking(move || {
-                    updater::apply_update(&update_router, &update_token, &sha256)
+                    let exe = updater::install_update(&update_router, &update_token, &sha256)?;
+                    if launcher::is_active() {
+                        log::info!("Binary replaced; exiting so the launcher restarts v{version}");
+                        launcher::emit(Event::Update {
+                            from: AGENT_VERSION.to_string(),
+                            to: version,
+                        });
+                        std::process::exit(launcher::UPDATED_EXIT_CODE);
+                    }
+                    updater::restart(&exe)
                 })
                 .await;
                 match res {
-                    Ok(Ok(())) => {} // unreachable: exec replaces the process image
+                    Ok(Ok(())) => {}
                     Ok(Err(e)) => log::error!("Update failed: {e}"),
                     Err(e) => log::error!("Update task join error: {e}"),
                 }
             }
             .boxed()
         })
-        .on("disconnect", |payload, _| {
+        .on("close", |payload, _| {
             async move {
+                launcher::emit(Event::Disconnected {
+                    reason: payload_reason(&payload, "router closed the connection"),
+                });
                 match payload {
                     Payload::Text(reason) => {
                         log::info!("Disconnected from router with reason: {:?}", reason);
@@ -263,14 +404,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             .boxed()
         })
-        .on("connect_error", |payload, _| {
+        .on("error", |payload, _| {
             async move {
+                launcher::emit(Event::Disconnected {
+                    reason: payload_reason(&payload, "connection error"),
+                });
                 match payload {
                     Payload::Text(reason) => {
-                        log::error!("Error connecting due to reason: {:?}", reason);
+                        log::error!("Connection error: {:?}", reason);
                     }
                     _ => {
-                        log::error!("Error connecting");
+                        log::error!("Connection error");
                     }
                 }
             }
@@ -307,9 +451,124 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Keep the client handle alive for the lifetime of the process.
     let _keep_alive = client;
 
-    tokio::signal::ctrl_c().await?;
+    shutdown_signal().await;
 
     log::info!("Shutting down");
+    launcher::emit(Event::Stopping);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Commands, clap::Error> {
+        let mut argv = vec!["frw-agent"];
+        argv.extend_from_slice(args);
+        Cli::try_parse_from(argv).map(|cli| cli.command.expect("a subcommand"))
+    }
+
+    #[test]
+    fn launched_from_defaults_to_tty() {
+        let cli = Cli::try_parse_from(["frw-agent"]).unwrap();
+        assert_eq!(cli.launched_from, LaunchedFrom::Tty);
+        let cli = Cli::try_parse_from([
+            "frw-agent",
+            "--launched-from",
+            "launcher",
+            "--profile",
+            "work",
+        ])
+        .unwrap();
+        assert_eq!(cli.launched_from, LaunchedFrom::Launcher);
+        assert_eq!(cli.profile.as_deref(), Some("work"));
+        assert!(Cli::try_parse_from(["frw-agent", "--launched-from", "gui"]).is_err());
+    }
+
+    #[test]
+    fn bare_new_stays_interactive() {
+        let Commands::New(args) = parse(&["new"]).unwrap() else {
+            panic!("expected new");
+        };
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn new_parses_repeated_flags() {
+        let Commands::New(args) = parse(&[
+            "new",
+            "--router",
+            "http://localhost:3000",
+            "--code",
+            "ABC",
+            "--name",
+            "box",
+            "--root",
+            "/a",
+            "--root",
+            "/b,c",
+            "--exe",
+            "git",
+            "--exe",
+            "cargo",
+            "--auto-update",
+            "false",
+        ])
+        .unwrap() else {
+            panic!("expected new");
+        };
+        assert!(!args.is_empty());
+        assert_eq!(args.router.as_deref(), Some("http://localhost:3000"));
+        assert_eq!(args.code.as_deref(), Some("ABC"));
+        assert_eq!(args.name.as_deref(), Some("box"));
+        assert_eq!(args.roots, vec!["/a", "/b,c"]);
+        assert_eq!(args.executables, vec!["git", "cargo"]);
+        assert_eq!(args.auto_update, Some(false));
+    }
+
+    #[test]
+    fn auto_update_needs_a_boolean() {
+        assert!(parse(&["new", "--code", "A", "--auto-update"]).is_err());
+        assert!(parse(&["new", "--code", "A", "--auto-update", "maybe"]).is_err());
+    }
+
+    #[test]
+    fn config_parses_read_and_edit_flags() {
+        let Commands::Config(args) = parse(&["config"]).unwrap() else {
+            panic!("expected config");
+        };
+        assert!(!args.json && !args.has_changes() && args.profile.is_none());
+
+        let Commands::Config(args) = parse(&["config", "--profile", "work", "--json"]).unwrap()
+        else {
+            panic!("expected config");
+        };
+        assert!(args.json && !args.has_changes());
+        assert_eq!(args.profile.as_deref(), Some("work"));
+
+        let Commands::Config(args) = parse(&[
+            "config",
+            "-p",
+            "work",
+            "--exe",
+            "node",
+            "--auto-update",
+            "true",
+        ])
+        .unwrap() else {
+            panic!("expected config");
+        };
+        assert!(args.has_changes());
+        assert!(args.roots.is_empty());
+        assert_eq!(args.auto_update, Some(true));
+    }
+
+    #[test]
+    fn profiles_parses_json_flag() {
+        assert!(matches!(
+            parse(&["profiles", "--json"]).unwrap(),
+            Commands::Profiles { json: true }
+        ));
+    }
 }
