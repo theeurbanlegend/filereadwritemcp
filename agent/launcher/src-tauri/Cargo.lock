@@ -1102,7 +1102,7 @@ dependencies = [
 
 [[package]]
 name = "frw-launcher"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "gethostname",
  "hex",
