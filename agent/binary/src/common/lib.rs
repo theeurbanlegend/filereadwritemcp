@@ -270,24 +270,150 @@ pub fn default_ignore_set() -> std::collections::HashSet<&'static str> {
     ])
 }
 
-pub fn curl(args: &[&str]) -> Result<String, String> {
-    let output = Command::new("curl")
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| format!("failed to spawn curl: {}", e))?;
+pub struct HttpResponse {
+    pub status: u16,
+    pub body: String,
+}
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+fn http_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .tls_config(
+            ureq::tls::TlsConfig::builder()
+                .provider(ureq::tls::TlsProvider::NativeTls)
+                .build(),
+        )
+        .http_status_as_error(false)
+        .timeout_connect(Some(std::time::Duration::from_secs(15)))
+        .user_agent(concat!("frw-agent/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .into()
+}
+
+pub fn post_json(url: &str, body: &serde_json::Value) -> Result<HttpResponse, String> {
+    let mut response = http_agent()
+        .post(url)
+        .header("content-type", "application/json")
+        .send(body.to_string())
+        .map_err(|e| e.to_string())?;
+    let status = response.status().as_u16();
+    let body = response
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| format!("could not read the response: {e}"))?;
+    Ok(HttpResponse { status, body })
+}
+
+pub fn download(url: &str, bearer: &str, dest: &std::path::Path) -> Result<(), String> {
+    let mut response = http_agent()
+        .get(url)
+        .header("authorization", format!("Bearer {bearer}"))
+        .call()
+        .map_err(|e| e.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.body_mut().read_to_string().unwrap_or_default();
         return Err(format!(
-            "curl failed ({}): {}",
-            output.status,
-            stderr.trim()
+            "download failed (HTTP {}): {}",
+            status.as_u16(),
+            detail.trim()
         ));
     }
+    let mut file = std::fs::File::create(dest)
+        .map_err(|e| format!("could not create {}: {e}", dest.display()))?;
+    std::io::copy(&mut response.body_mut().as_reader(), &mut file)
+        .map_err(|e| format!("download interrupted: {e}"))?;
+    file.sync_all().map_err(|e| e.to_string())
+}
 
-    String::from_utf8(output.stdout)
-        .map_err(|e| format!("curl output was not valid UTF-8: {}", e))
-        .map(|s| s.trim().to_string())
+#[cfg(test)]
+mod tests {
+    use super::{download, post_json};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+
+    fn serve_once(response: &'static str) -> (String, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut buf).unwrap();
+                request.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&request);
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let length = text[..end]
+                        .lines()
+                        .find_map(|l| {
+                            l.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap_or(0);
+                    if request.len() >= end + 4 + length || n == 0 {
+                        break;
+                    }
+                }
+            }
+            stream.write_all(response.as_bytes()).unwrap();
+            tx.send(String::from_utf8_lossy(&request).to_string())
+                .unwrap();
+        });
+        (url, rx)
+    }
+
+    #[test]
+    fn download_sends_the_token_and_writes_the_body() {
+        let (url, request) =
+            serve_once("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nbinary");
+        let dest = std::env::temp_dir().join(format!("frw-download-{}", std::process::id()));
+        download(&format!("{url}/agent/update/download"), "tok123", &dest).unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"binary");
+        assert!(
+            request
+                .recv()
+                .unwrap()
+                .to_ascii_lowercase()
+                .contains("authorization: bearer tok123")
+        );
+        std::fs::remove_file(dest).unwrap();
+    }
+
+    #[test]
+    fn download_reports_http_errors() {
+        let (url, _request) = serve_once(
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nno binary",
+        );
+        let dest = std::env::temp_dir().join(format!("frw-download-404-{}", std::process::id()));
+        let err = download(&url, "tok", &dest).unwrap_err();
+        assert_eq!(err, "download failed (HTTP 404): no binary");
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn post_json_returns_status_and_body_for_any_status() {
+        let (url, request) = serve_once(
+            "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"message\":\"x\"}",
+        );
+        let response = post_json(&url, &serde_json::json!({"code": "abc"})).unwrap();
+        assert_eq!(response.status, 400);
+        assert_eq!(response.body, "{\"message\":\"x\"}");
+        let sent = request.recv().unwrap();
+        assert!(
+            sent.to_ascii_lowercase()
+                .contains("content-type: application/json")
+        );
+        assert!(sent.ends_with("{\"code\":\"abc\"}"));
+    }
+
+    #[test]
+    fn unreachable_hosts_are_errors() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        assert!(post_json(&url, &serde_json::json!({})).is_err());
+    }
 }
