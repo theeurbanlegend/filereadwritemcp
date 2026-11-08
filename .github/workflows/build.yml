@@ -78,7 +78,7 @@ jobs:
           Write-Output "No Visual C++ runtime DLL imports"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agent-${{ matrix.target.target }}
           path: agent/binary/target/${{ matrix.target.target }}/release/agent-binary${{ matrix.target.ext }}
@@ -151,7 +151,7 @@ jobs:
         run: node scripts/collect-bundles.mjs --target "${{ matrix.target }}" --out ../../launcher-out
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: launcher-${{ matrix.target }}
           path: launcher-out/*
