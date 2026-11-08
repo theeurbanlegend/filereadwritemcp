@@ -1,26 +1,32 @@
-use std::sync::LazyLock;
+use std::sync::Mutex;
 
-static LOGIN_PATH: LazyLock<Option<String>> = LazyLock::new(resolve);
+static LOGIN_PATH: Mutex<Option<Option<String>>> = Mutex::new(None);
 
 pub fn preload() {
-    std::thread::spawn(|| LazyLock::force(&LOGIN_PATH));
+    std::thread::spawn(login_path);
 }
 
-pub fn login_path() -> Option<&'static str> {
-    LOGIN_PATH.as_deref()
+pub fn login_path() -> Option<String> {
+    let mut cached = LOGIN_PATH.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(path) = cached.as_ref() {
+        return path.clone();
+    }
+    let path = resolve()?;
+    *cached = Some(path.clone());
+    path
 }
 
 #[cfg(unix)]
-fn resolve() -> Option<String> {
+fn resolve() -> Option<Option<String>> {
     let shell_path = login_shell_path()?;
     let current = std::env::var("PATH").unwrap_or_default();
     let merged = merge_paths(&shell_path, &current);
-    (merged != current).then_some(merged)
+    Some((merged != current).then_some(merged))
 }
 
 #[cfg(not(unix))]
-fn resolve() -> Option<String> {
-    None
+fn resolve() -> Option<Option<String>> {
+    Some(None)
 }
 
 #[cfg(unix)]
@@ -52,7 +58,7 @@ fn login_shell_path() -> Option<String> {
         let _ = stdout.read_to_string(&mut out);
         let _ = tx.send(out);
     });
-    let output = rx.recv_timeout(Duration::from_secs(3));
+    let output = rx.recv_timeout(Duration::from_secs(10));
     if output.is_err() {
         let _ = child.kill();
     }
