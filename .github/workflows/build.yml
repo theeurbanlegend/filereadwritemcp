@@ -65,6 +65,18 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target.target }} --manifest-path agent/binary/Cargo.toml
 
+      - name: Check the agent runs without the Visual C++ runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exe = "agent/binary/target/${{ matrix.target.target }}/release/agent-binary.exe"
+          $text = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($exe))
+          if ($text -match '(?i)vcruntime140[_0-9]*\.dll') {
+            Write-Error "$exe imports $($Matches[0]); it would fail on PCs without the Visual C++ Redistributable"
+            exit 1
+          }
+          Write-Output "No Visual C++ runtime DLL imports"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
