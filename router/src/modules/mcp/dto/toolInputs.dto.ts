@@ -10,11 +10,31 @@ export const ReadFileInputSchema = z.object({
     .number()
     .optional()
     .describe('Ending line for the read operation (1-based)'),
+  encoding: z
+    .enum(['auto', 'utf8', 'base64'])
+    .optional()
+    .describe(
+      'auto (default): text files come back as text, images as viewable images, other binary files as base64. base64: always return the raw bytes as base64 text, e.g. to copy a file exactly. utf8: always read as text.',
+    ),
+});
+
+export const GetFileInfoInputSchema = z.object({
+  path: z.string().describe('Path to the file or folder'),
 });
 
 export const WriteFileInputSchema = z.object({
   path: z.string().describe('Path to the file'),
-  content: z.string().describe('Content to write to the file'),
+  content: z
+    .string()
+    .describe(
+      'Content to write: plain text, or base64 bytes when encoding is "base64"',
+    ),
+  encoding: z
+    .enum(['utf8', 'base64'])
+    .optional()
+    .describe(
+      'utf8 (default) writes content as text. base64 decodes content and writes the bytes, for images and other binary files (up to 5 MB; no fromLine/toLine).',
+    ),
   fromLine: z
     .number()
     .optional()
@@ -25,6 +45,56 @@ export const WriteFileInputSchema = z.object({
     .optional()
     .describe(
       'Required when overwriting an existing file: the current hash from ReadFile or a prior WriteFile. Re-read and resend if you get a Hash mismatch. Omit for brand-new files.',
+    ),
+});
+
+export const EditFileInputSchema = z.object({
+  path: z.string().describe('Path to the text file to edit'),
+  oldString: z
+    .string()
+    .describe(
+      'Exact text to replace, including whitespace and indentation. Must match exactly once unless replaceAll is true; include enough surrounding lines to make it unique.',
+    ),
+  newString: z.string().describe('Text to put in its place'),
+  replaceAll: z
+    .boolean()
+    .optional()
+    .describe('Replace every match instead of requiring exactly one'),
+  hash: z
+    .string()
+    .optional()
+    .describe(
+      'Optional: the hash from your last read or write. When given, the edit fails if the file changed since.',
+    ),
+});
+
+export const MoveFileInputSchema = z.object({
+  from: z.string().describe('Current path of the file or folder'),
+  to: z
+    .string()
+    .describe(
+      'New path, including the name. Its parent folder must already exist.',
+    ),
+  hash: z
+    .string()
+    .optional()
+    .describe(
+      'Required only to replace an existing file at "to": that file\'s current hash. Folders are never overwritten.',
+    ),
+});
+
+export const CopyFileInputSchema = z.object({
+  from: z.string().describe('Path of the file to copy'),
+  to: z
+    .string()
+    .describe(
+      'Path of the new copy, including the name. Its parent folder must already exist.',
+    ),
+  hash: z
+    .string()
+    .optional()
+    .describe(
+      'Required only to replace an existing file at "to": that file\'s current hash.',
     ),
 });
 

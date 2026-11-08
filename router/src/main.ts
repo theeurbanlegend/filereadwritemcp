@@ -16,7 +16,7 @@ async function bootstrap() {
   // Must be registered before json() so that route is not JSON-parsed.
   app.use('/agent/update/webhook', raw({ type: '*/*', limit: '2mb' }));
   app.use(urlencoded({ extended: true, limit: '100kb' })); // /token is form-encoded
-  app.use(json({ limit: '4mb' })); // /mcp JSON-RPC
+  app.use(json({ limit: '8mb' })); // /mcp JSON-RPC
   await app.listen(Number(process.env.PORT ?? 3000));
   console.log('App live on port', Number(process.env.PORT ?? 3000));
 }

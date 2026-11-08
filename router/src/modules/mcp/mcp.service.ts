@@ -8,6 +8,10 @@ import {
   CreateFolderInputSchema,
   DeleteFileInputSchema,
   DeleteFolderInputSchema,
+  GetFileInfoInputSchema,
+  EditFileInputSchema,
+  MoveFileInputSchema,
+  CopyFileInputSchema,
   GetFolderContentsInputSchema,
   ReadFileInputSchema,
   RunCommandInputSchema,
@@ -19,6 +23,7 @@ import { INSTRUCTIONS } from 'src/common/constants/instructions';
 import { AgentRegistry } from '../routing/agent-registry';
 import { EnrollmentService } from '../identity/enrollment.service';
 import type { AgentConnection } from 'src/common/agent-protocol';
+import { unsupportedFeature, toCallToolResult } from './tool-result';
 
 // Optional routing param mixed into every forwarded tool: which enrolled machine
 // to run on. Optional when exactly one of the user's agents is online; required
@@ -98,7 +103,7 @@ export class McpService {
       {
         title: 'Read File',
         description:
-          'Read the contents of a file. Pass fromLine/toLine (1-based) to read a specific range. Large files are truncated unless a range is given — check the `truncated`/`bytes`/`lineCount` fields.',
+          'Read a file. Text comes back as text: pass fromLine/toLine (1-based) to read a range; large files are truncated unless a range is given (check `truncated`/`bytes`/`lineCount`). Images (png, jpeg, gif, webp) come back as images you can see; other binary files as base64 with their mimeType. Binary files are limited to 5 MB.',
         inputSchema: ReadFileInputSchema.extend(agentIdShape),
         annotations: { readOnlyHint: true },
       },
@@ -110,11 +115,59 @@ export class McpService {
       {
         title: 'Write File',
         description:
-          'Create a file, or overwrite an existing one. Overwriting requires the current hash (from ReadFile/a prior WriteFile).',
+          'Create a file, or overwrite an existing one. Overwriting requires the current hash (from ReadFile, GetFileInfo or a prior WriteFile). For binary files pass the bytes as base64 with encoding "base64".',
         inputSchema: WriteFileInputSchema.extend(agentIdShape),
         annotations: { readOnlyHint: false, destructiveHint: true },
       },
       forward(ToolTypeEnum.WriteFile),
+    );
+
+    server.registerTool(
+      ToolTypeEnum.GetFileInfo,
+      {
+        title: 'Get File Info',
+        description:
+          'Describe a file or folder without reading it: kind, size in bytes, modified time, mimeType, whether it is text, and its hash (for files up to 100 MB). Use it to check a file before reading it.',
+        inputSchema: GetFileInfoInputSchema.extend(agentIdShape),
+        annotations: { readOnlyHint: true },
+      },
+      forward(ToolTypeEnum.GetFileInfo),
+    );
+
+    server.registerTool(
+      ToolTypeEnum.EditFile,
+      {
+        title: 'Edit File',
+        description:
+          'Replace exact text in a text file. oldString must match exactly once (or pass replaceAll). No line numbers or hash needed, and Windows line endings are handled. Returns the new hash. Prefer this over writeFile for changes to existing files.',
+        inputSchema: EditFileInputSchema.extend(agentIdShape),
+        annotations: { readOnlyHint: false, destructiveHint: true },
+      },
+      forward(ToolTypeEnum.EditFile),
+    );
+
+    server.registerTool(
+      ToolTypeEnum.MoveFile,
+      {
+        title: 'Move File',
+        description:
+          'Move or rename a file or folder, including binary files of any size. Replacing an existing file needs its hash; existing folders are never replaced. The allowed root folders themselves cannot be moved.',
+        inputSchema: MoveFileInputSchema.extend(agentIdShape),
+        annotations: { readOnlyHint: false, destructiveHint: true },
+      },
+      forward(ToolTypeEnum.MoveFile),
+    );
+
+    server.registerTool(
+      ToolTypeEnum.CopyFile,
+      {
+        title: 'Copy File',
+        description:
+          "Copy a file, including binary files of any size, without reading it. Replacing an existing file needs its hash. Copies files only, not folders. Returns the copy's hash and size.",
+        inputSchema: CopyFileInputSchema.extend(agentIdShape),
+        annotations: { readOnlyHint: false, destructiveHint: false },
+      },
+      forward(ToolTypeEnum.CopyFile),
     );
 
     server.registerTool(
@@ -274,9 +327,16 @@ export class McpService {
       return this.errorResult('Could not resolve an agent to run on.');
     }
 
+    const missing = unsupportedFeature(toolName, toolArgs, conn.tools);
+    if (missing) {
+      return this.errorResult(
+        `The agent on ${conn.name} is too old for ${missing}. Update FileReadWrite on that machine (restarting the agent with auto-update on fetches the latest version), then retry.`,
+      );
+    }
+
     try {
       const result = await conn.call(toolName, toolArgs, timeoutMs);
-      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+      return toCallToolResult(toolName, toolArgs, result);
     } catch (e) {
       return this.errorResult(e instanceof Error ? e.message : String(e));
     }

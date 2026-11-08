@@ -13,6 +13,10 @@ pub enum ToolTypeEnum {
     ListAllowedResources,
     ReadFile,
     WriteFile,
+    GetFileInfo,
+    EditFile,
+    MoveFile,
+    CopyFile,
     DeleteFile,
     CreateFolder,
     DeleteFolder,
@@ -78,4 +82,35 @@ pub struct SearchNamesResult {
 pub struct SearchContentResult {
     pub files: Vec<String>,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BinaryReadResult {
+    pub content_base64: String,
+    pub hash: String,
+    pub bytes: usize,
+    pub mime_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileInfo {
+    pub path: String,
+    pub kind: String,
+    pub bytes: u64,
+    pub modified: Option<String>,
+    pub mime_type: Option<String>,
+    pub is_text: Option<bool>,
+    pub hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditResult {
+    pub hash: String,
+    pub replacements: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CopyResult {
+    pub hash: String,
+    pub bytes: u64,
 }
