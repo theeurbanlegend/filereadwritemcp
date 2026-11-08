@@ -292,17 +292,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     match payload {
                         Payload::Text(msgs) => {
                             if let Some(msg) = msgs.first().cloned() {
-                                let tool_name: ToolTypeEnum = msg
-                                    .get("tool")
-                                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                                    .unwrap_or(ToolTypeEnum::ListAllowedResources);
+                                let requested = msg.get("tool").cloned().unwrap_or_default();
+                                let tool_name: Option<ToolTypeEnum> =
+                                    serde_json::from_value(requested.clone()).ok();
                                 let args = msg.get("args").cloned().unwrap_or(json!({}));
                                 let id = msg.get("id").cloned();
-                                let result = tokio::task::spawn_blocking(move || {
-                                    dispatch(&core, tool_name, args)
-                                })
-                                .await
-                                .unwrap_or_else(|e| Err(format!("dispatch worker panicked: {e}")));
+                                let result = match tool_name {
+                                    Some(tool_name) => tokio::task::spawn_blocking(move || {
+                                        dispatch(&core, tool_name, args)
+                                    })
+                                    .await
+                                    .unwrap_or_else(|e| {
+                                        Err(format!("dispatch worker panicked: {e}"))
+                                    }),
+                                    None => Err(format!(
+                                        "Unknown tool {requested}. This agent (v{AGENT_VERSION}) may need an update."
+                                    )),
+                                };
                                 match result {
                                     Ok(val) => {
                                         if let Some(id_val) = id
