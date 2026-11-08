@@ -24,6 +24,10 @@ const CONNECTS_PER_MINUTE = 20;
 export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(AgentGateway.name);
   private readonly connections = new Map<string, GatewayAgentConnection>();
+  private readonly pending = new Map<
+    string,
+    Promise<GatewayAgentConnection | undefined>
+  >();
   private readonly connectAttempts = new Map<
     string,
     { start: number; count: number }
@@ -36,22 +40,45 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {}
 
   async handleConnection(client: Socket): Promise<void> {
+    const ready = this.authenticate(client);
+    this.pending.set(client.id, ready);
+    try {
+      await ready;
+    } finally {
+      this.pending.delete(client.id);
+    }
+  }
+
+  private async authenticate(
+    client: Socket,
+  ): Promise<GatewayAgentConnection | undefined> {
     if (!this.allowConnect(this.clientIp(client))) {
       client.disconnect(true);
-      return;
+      return undefined;
     }
     try {
       const token = this.extractToken(client);
       const { userId, agentId, name } =
         await this.enrollment.authenticateAgent(token);
+      if (client.disconnected) return undefined;
       const conn = new GatewayAgentConnection(client, userId, agentId, name);
       this.connections.set(client.id, conn);
       this.registry.register(conn);
+      return conn;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`Rejected agent connection: ${message}`);
       client.disconnect(true);
+      return undefined;
     }
+  }
+
+  private async connectionFor(
+    client: Socket,
+  ): Promise<GatewayAgentConnection | undefined> {
+    return (
+      this.connections.get(client.id) ?? (await this.pending.get(client.id))
+    );
   }
 
   handleDisconnect(client: Socket): void {
@@ -63,12 +90,12 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('hello')
-  onHello(
+  async onHello(
     @ConnectedSocket() client: Socket,
     @MessageBody()
     body: { agentVersion?: string; target?: string; tools?: ToolDescriptor[] },
-  ): void {
-    const conn = this.connections.get(client.id);
+  ): Promise<void> {
+    const conn = await this.connectionFor(client);
     if (!conn) return;
     conn.setTools(body?.tools ?? []);
     // Newer agents include `target` in hello, so we can offer an update inline.
@@ -76,11 +103,11 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('check-update')
-  onCheckUpdate(
+  async onCheckUpdate(
     @ConnectedSocket() client: Socket,
     @MessageBody() body: { agentVersion?: string; target?: string },
-  ): void {
-    const conn = this.connections.get(client.id);
+  ): Promise<void> {
+    const conn = await this.connectionFor(client);
     if (!conn) return;
     this.offerUpdate(conn, body?.agentVersion, body?.target);
   }
