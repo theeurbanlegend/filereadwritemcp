@@ -1,4 +1,4 @@
-use crate::common::lib::curl;
+use crate::common::lib::download;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,7 +22,6 @@ pub fn install_update(
 ) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let tmp = exe.with_extension("new");
-    let tmp_str = tmp.to_str().ok_or("temp path is not valid UTF-8")?;
 
     let url = format!(
         "{}/agent/update/download?target={}",
@@ -30,16 +29,10 @@ pub fn install_update(
         TARGET
     );
 
-    // Reuse the existing curl helper. `-o` writes the body straight to disk, so
-    // stdout stays empty (the helper's UTF-8 decode of empty stdout is fine here).
-    curl(&[
-        "-fsSL",
-        "-H",
-        &format!("authorization: Bearer {token}"),
-        "-o",
-        tmp_str,
-        &url,
-    ])?;
+    if let Err(e) = download(&url, token, &tmp) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
 
     let got = sha256_hex(&tmp).map_err(|e| e.to_string())?;
     if !got.eq_ignore_ascii_case(expected_sha) {

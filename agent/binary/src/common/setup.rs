@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::common::lib::{curl, get_agent_dir, get_machine_name};
+use crate::common::lib::{get_agent_dir, get_machine_name, post_json};
 use crate::common::profiles::{
     clean_executables, env_file, profile_dir, profile_exists, sanitize, validate_roots,
     write_atomic,
@@ -207,26 +207,14 @@ pub fn setup_noninteractive(agent_dir: &Path, args: &NewArgs) -> Result<String, 
 
 fn enroll(agent_dir: &Path, enrollment: &Enrollment) -> Result<String, String> {
     let payload = json!({ "code": enrollment.code, "name": enrollment.machine_name });
-    let output = curl(&[
-        "-sS",
-        "-w",
-        "\n%{http_code}",
-        "-X",
-        "POST",
-        &format!("{}/agent/enroll", enrollment.router_url),
-        "-H",
-        "content-type: application/json",
-        "-d",
-        &payload.to_string(),
-    ])
-    .map_err(|e| format!("Could not reach {}: {e}", enrollment.router_url))?;
-    let (body, status) = split_status(&output);
-    if !(200..300).contains(&status) {
-        return Err(enroll_error(status, body));
+    let response = post_json(&format!("{}/agent/enroll", enrollment.router_url), &payload)
+        .map_err(|e| format!("Could not reach {}: {e}", enrollment.router_url))?;
+    if !(200..300).contains(&response.status) {
+        return Err(enroll_error(response.status, &response.body));
     }
 
-    let parsed: Value =
-        serde_json::from_str(body).map_err(|e| format!("Failed to parse response: {e}"))?;
+    let parsed: Value = serde_json::from_str(&response.body)
+        .map_err(|e| format!("Failed to parse response: {e}"))?;
     let token = parsed["token"]
         .as_str()
         .ok_or_else(|| "No token in router response".to_string())?;
@@ -252,11 +240,6 @@ fn enroll(agent_dir: &Path, enrollment: &Enrollment) -> Result<String, String> {
     write_atomic(&env_path, &env_content).map_err(|e| format!("Error writing .env file: {e}"))?;
 
     Ok(agent_id)
-}
-
-fn split_status(output: &str) -> (&str, u16) {
-    let (body, code) = output.rsplit_once('\n').unwrap_or(("", output));
-    (body, code.trim().parse().unwrap_or(0))
 }
 
 fn enroll_error(status: u16, body: &str) -> String {
@@ -285,11 +268,8 @@ mod tests {
     #[test]
     fn enroll_errors_use_the_server_message() {
         let body = r#"{"message":"Invalid or expired enrollment code","error":"Bad Request","statusCode":400}"#;
-        let output = format!("{body}\n400");
-        let (parsed_body, status) = split_status(&output);
-        assert_eq!(status, 400);
         assert_eq!(
-            enroll_error(status, parsed_body),
+            enroll_error(400, body),
             "Invalid or expired enrollment code"
         );
         assert_eq!(
@@ -303,7 +283,6 @@ mod tests {
             enroll_error(502, "<html>Bad gateway</html>"),
             "Enrollment failed: the server answered 502"
         );
-        assert_eq!(split_status("404"), ("", 404));
     }
 
     fn flags(code: Option<&str>) -> NewArgs {
