@@ -12,7 +12,7 @@ checksum = "aae1277d39aeec15cb388266ecc24b11c80469deae6067e17a1a7aa9e5c1f234"
 name = "agent-binary"
 version = "1.0.8"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "clap",
  "dialoguer",
  "dirs",
